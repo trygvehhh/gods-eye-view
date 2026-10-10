@@ -4,6 +4,13 @@ import { normalizeWeatherWarningSnapshot, warningLevel } from './records.js';
 import { buildWarningCard, warningAnchorDegrees } from './cards.js';
 import { createMetAlertsWarningSource } from './source.js';
 import { createWeatherWarningsLayer } from './index.js';
+import {
+  avalancheRegionPolygons,
+  groupNveWarnings,
+  normalizeAvalancheWarnings,
+  osloLocalMs,
+  parseVarsomRing,
+} from './nveRecords.js';
 import { weatherWarningsProxy } from '../../../server/providers/weatherWarnings.js';
 
 const ring = [
@@ -135,55 +142,138 @@ function proxyHandler(options) {
   };
 }
 
-test('the proxy identifies itself, normalizes and caches MetAlerts', async () => {
+const NOW = Date.parse('2025-10-04T12:00:00Z');
+const floodRecord = (municipality, overrides = {}) => ({
+  Id: '584680',
+  ActivityLevel: '3',
+  ValidFrom: '2025-10-04T07:00:00',
+  ValidTo: '2025-10-05T06:59:00',
+  MainText: 'Flood warning orange level for parts of Eastern Norway',
+  ConsequenceText: 'May cause closed roads and bridges.',
+  AdviceText: 'Avoid areas near rivers.',
+  MunicipalityList: [municipality],
+  ...overrides,
+});
+const varsomRegion = {
+  Id: 3003,
+  Name: 'Nordenskiöld Land',
+  Polygon: ['78.0,15.0 78.2,15.0 78.2,15.5'],
+};
+const varsomSummary = [
+  {
+    Id: 3003,
+    Name: 'Nordenskiöld Land',
+    AvalancheWarningList: [
+      {
+        RegionName: 'Nordenskiöld Land',
+        DangerLevel: '3',
+        ValidFrom: '2025-10-04T00:00:00',
+        ValidTo: '2025-10-04T23:59:59',
+        MainText: 'Some avalanches may release naturally.',
+      },
+    ],
+  },
+];
+
+/** Route the proxy's upstream requests to fixtures; `fail` names hosts that answer 503. */
+function upstream({ fail = new Set() } = {}) {
   const requests = [];
-  let clock = 0;
-  const handle = proxyHandler({
-    now: () => clock,
-    fetchImpl: async (url, init) => {
-      requests.push({
-        url: String(url),
-        userAgent: init.headers['User-Agent'],
-      });
+  const fetchImpl = async (url, init) => {
+    const href = String(url);
+    requests.push({ href, userAgent: init.headers['User-Agent'] });
+    if (fail.has(new URL(href).hostname))
+      return new Response('down', { status: 503 });
+    if (href.includes('metalerts'))
+      return Response.json({ features: [feature()] });
+    if (href.includes('/flood/'))
+      return Response.json([
+        floodRecord({ Id: '3446', Name: 'Gran' }),
+        floodRecord({ Id: '3448', Name: 'Lunner' }),
+        floodRecord(
+          { Id: '0301', Name: 'Oslo' },
+          { Id: 'green', ActivityLevel: '1' },
+        ),
+      ]);
+    if (href.includes('/landslide/')) return Response.json([]);
+    if (href.includes('/avalanche/') && href.includes('/Region/'))
+      return Response.json([varsomRegion]);
+    if (href.includes('/avalanche/')) return Response.json(varsomSummary);
+    if (href.includes('kommuneinfo'))
       return Response.json({
-        type: 'FeatureCollection',
-        features: [feature()],
+        omrade: { type: 'MultiPolygon', coordinates: [[ring]] },
       });
-    },
-  });
+    throw new Error(`unexpected upstream ${href}`);
+  };
+  return { requests, fetchImpl };
+}
+
+test('the proxy merges MET, NVE and Varsom warnings and identifies itself', async () => {
+  const { requests, fetchImpl } = upstream();
+  let clock = NOW;
+  const handle = proxyHandler({ now: () => clock, fetchImpl });
   const first = await handle({ url: '/', method: 'GET' });
   assert.equal(first.status, 200);
-  assert.equal(first.body.rows.length, 1);
-  assert.match(
-    requests[0].url,
-    /^https:\/\/api\.met\.no\/weatherapi\/metalerts\/2\.0\/current\.json/,
+  assert.deepEqual(first.body.errors, []);
+  const bySource = Object.fromEntries(
+    first.body.rows.map((row) => [row.source, row]),
   );
-  assert.match(requests[0].userAgent, /gods-eye-view/);
-  clock = 60_000;
+  assert.deepEqual(Object.keys(bySource).sort(), ['avalanche', 'flood', 'met']);
+  assert.equal(bySource.flood.level, 'orange');
+  assert.equal(bySource.flood.area, 'Gran, Lunner');
+  assert.equal(
+    bySource.flood.polygons.length,
+    2,
+    'one outline per municipality',
+  );
+  assert.equal(bySource.flood.onset, Date.parse('2025-10-04T05:00:00Z'));
+  assert.equal(
+    bySource.avalanche.eventName,
+    'Avalanche danger 3 (considerable)',
+  );
+  assert.ok(
+    requests.every((request) => /gods-eye-view/.test(request.userAgent)),
+  );
+  assert.ok(
+    requests.some((request) =>
+      request.href.startsWith(
+        'https://api.met.no/weatherapi/metalerts/2.0/current.json',
+      ),
+    ),
+  );
+  const count = requests.length;
+  clock = NOW + 60_000;
   await handle({ url: '/', method: 'GET' });
-  assert.equal(requests.length, 1, 'served from the 5-minute cache');
+  assert.equal(requests.length, count, 'served from cache');
 });
 
-test('the proxy serves the last good snapshot as stale when MET fails', async () => {
-  let clock = 0;
-  let fail = false;
-  const handle = proxyHandler({
-    now: () => clock,
-    fetchImpl: async () =>
-      fail
-        ? new Response('down', { status: 503 })
-        : Response.json({ features: [feature()] }),
-  });
+test('one failing provider leaves the others on the map', async () => {
+  const { fetchImpl } = upstream({ fail: new Set(['api01.nve.no']) });
+  const handle = proxyHandler({ now: () => NOW, fetchImpl });
+  const result = await handle({ url: '/', method: 'GET' });
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.body.errors, ['flood', 'landslide', 'avalanche']);
+  assert.deepEqual(
+    result.body.rows.map((row) => row.source),
+    ['met'],
+  );
+});
+
+test('the proxy serves the last good snapshot as stale when a provider fails', async () => {
+  let clock = NOW;
+  const fail = new Set();
+  const { fetchImpl } = upstream({ fail });
+  const handle = proxyHandler({ now: () => clock, fetchImpl });
   await handle({ url: '/', method: 'GET' });
-  fail = true;
-  clock = 600_000;
+  fail.add('api.met.no');
+  clock = NOW + 600_000;
   const stale = await handle({ url: '/', method: 'GET' });
   assert.equal(stale.status, 200);
   assert.equal(stale.body.stale, true);
   assert.equal(stale.headers['X-Data-Stale'], 'true');
+  assert.ok(stale.body.rows.some((row) => row.source === 'met'));
 });
 
-test('the proxy rejects other methods, paths and upstream garbage', async () => {
+test('the proxy rejects other methods, paths and all-garbage upstreams', async () => {
   const handle = proxyHandler({
     fetchImpl: async () => Response.json({ nope: true }),
   });
@@ -192,6 +282,73 @@ test('the proxy rejects other methods, paths and upstream garbage', async () => 
   const garbage = await handle({ url: '/', method: 'GET' });
   assert.equal(garbage.status, 502);
   assert.equal(garbage.body.error, 'weather_warnings_unavailable');
+});
+
+test('NVE wall-clock times are read in Norwegian time across DST', () => {
+  assert.equal(
+    osloLocalMs('2025-10-04T07:00:00'),
+    Date.parse('2025-10-04T05:00:00Z'),
+  );
+  assert.equal(
+    osloLocalMs('2026-02-10T00:00:00'),
+    Date.parse('2026-02-09T23:00:00Z'),
+  );
+  assert.equal(
+    osloLocalMs('2025-10-04T07:00:00+02:00'),
+    Date.parse('2025-10-04T05:00:00Z'),
+  );
+  assert.equal(osloLocalMs('not a time'), null);
+});
+
+test('NVE records group per warning and keep yellow-or-higher in effect now', () => {
+  const rows = groupNveWarnings(
+    [
+      floodRecord({ Id: '3446', Name: 'Gran' }),
+      floodRecord({ Id: '3446', Name: 'Gran' }),
+      floodRecord({ Id: '3448', Name: 'Lunner' }),
+      floodRecord(
+        { Id: '0301', Name: 'Oslo' },
+        { Id: 'green', ActivityLevel: '1' },
+      ),
+      floodRecord(
+        { Id: '5001', Name: 'Trondheim' },
+        {
+          Id: 'tomorrow',
+          ValidFrom: '2025-10-05T07:00:00',
+          ValidTo: '2025-10-06T06:59:00',
+        },
+      ),
+      floodRecord({ Id: 'x', Name: 'Bad' }, { Id: 'bad-municipality' }),
+    ],
+    'flood',
+    NOW,
+  );
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].stableId, 'nve-flood:584680');
+  assert.deepEqual(rows[0].municipalities, ['3446', '3448']);
+  assert.equal(rows[0].description, 'May cause closed roads and bridges.');
+  assert.equal(groupNveWarnings({}, 'flood', NOW), null);
+});
+
+test('Varsom regions parse "lat,lon" rings and avalanche danger maps to levels', () => {
+  assert.deepEqual(parseVarsomRing('78.0,15.0 78.2,15.0 78.2,15.5'), [
+    [15, 78],
+    [15, 78.2],
+    [15.5, 78.2],
+    [15, 78],
+  ]);
+  assert.equal(parseVarsomRing('78.0,15.0 nonsense'), null);
+  const polygons = avalancheRegionPolygons([
+    varsomRegion,
+    { Id: 1, Polygon: [] },
+  ]);
+  assert.deepEqual([...polygons.keys()], [3003]);
+  const [row] = normalizeAvalancheWarnings(varsomSummary, polygons, NOW);
+  assert.equal(row.level, 'orange');
+  assert.equal(row.area, 'Nordenskiöld Land');
+  const low = structuredClone(varsomSummary);
+  low[0].AvalancheWarningList[0].DangerLevel = '1';
+  assert.deepEqual(normalizeAvalancheWarnings(low, polygons, NOW), []);
 });
 
 test('the browser source reads rows from the same-origin route', async () => {
@@ -320,4 +477,62 @@ test('a failed refresh reports an error without clearing the layer', async () =>
   assert.equal(layer.getStats().count, 1);
   assert.equal(layer.getStats().error, 'MetAlerts HTTP 502');
   layer.destroy();
+});
+
+test('source chips hide a warning family on the map, in counts and queries', async () => {
+  const [met] = normalizeWeatherWarningSnapshot({ features: [feature()] });
+  const flood = {
+    ...met,
+    stableId: 'nve-flood:584680',
+    source: 'flood',
+    level: 'orange',
+    eventName: 'Flood',
+    web: 'https://www.varsom.no/en/flood-and-landslide-warning-service/',
+  };
+  let picked = { id: 'weather-warning:nve-flood:584680:0' };
+  const h = harness([met, flood], { pick: () => picked });
+  let repaints = 0;
+  h.layer.setRowControlsListener(() => repaints++);
+  await h.layer.update();
+  const chips = () => h.layer.getRowControls().chips;
+  assert.deepEqual(
+    chips().map((chip) => [chip.label, chip.active]),
+    [
+      ['Weather 1', true],
+      ['Flood 1', true],
+      ['Landslide', true],
+      ['Avalanche', true],
+    ],
+  );
+  h.clicks.handler({ position: { x: 1, y: 1 } });
+  const [card] = h.overlay.entries.get('weather-warnings');
+  assert.match(card.details.at(-1), /^Varsom ↗/);
+
+  chips()[1].onClick();
+  assert.equal(chips()[1].active, false);
+  assert.ok(repaints >= 2, 'refresh and toggle both repaint the row');
+  const shown = h.sources[0].entities.values.filter((entity) => entity.show);
+  assert.deepEqual(
+    shown.map((entity) => entity.properties.source.getValue()),
+    ['met'],
+  );
+  assert.equal(h.overlay.entries.get('weather-warnings').length, 0);
+  assert.deepEqual(
+    h.layer.getRowControls().legend.map((band) => band.count),
+    [1, 0, 0],
+  );
+  assert.deepEqual(
+    h.layer.getAnalystRecords().map((record) => record.source),
+    ['met'],
+  );
+
+  // A refresh keeps the family hidden.
+  picked = null;
+  await h.layer.update();
+  chips()[1].onClick();
+  assert.equal(
+    h.sources[0].entities.values.every((entity) => entity.show),
+    true,
+  );
+  h.layer.destroy();
 });

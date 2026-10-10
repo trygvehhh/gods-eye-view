@@ -369,6 +369,7 @@
   "src/layers/weatherWarnings/index.js",
   "src/layers/weatherWarnings/source.js",
   "src/layers/weatherWarnings/records.js",
+  "src/layers/weatherWarnings/nveRecords.js",
   "src/layers/weatherWarnings/cards.js",
   "src/layers/perimeters/records.test.mjs",
   "src/layers/perimeters/source.test.mjs",

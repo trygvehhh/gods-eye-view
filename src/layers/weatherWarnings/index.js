@@ -12,6 +12,7 @@ export {
   WARNING_LEVELS,
 } from './records.js';
 export { createMetAlertsWarningSource } from './source.js';
+export * from './nveRecords.js';
 export * from './cards.js';
 
 const ringPositions = (ring) =>
@@ -28,6 +29,14 @@ const LEVEL_LABELS = Object.freeze({
   orange: 'Orange · severe',
   red: 'Red · extreme',
 });
+/** Warning families, each switchable from the layer row. */
+const SOURCES = Object.freeze([
+  { id: 'met', label: 'Weather', title: 'MET Norway weather warnings' },
+  { id: 'flood', label: 'Flood', title: 'NVE flood warnings' },
+  { id: 'landslide', label: 'Landslide', title: 'NVE landslide warnings' },
+  { id: 'avalanche', label: 'Avalanche', title: 'Varsom avalanche danger' },
+]);
+const sourceOf = (row) => row.source ?? 'met';
 
 /** Own one weather-warning display, its refresh lifecycle, and click selection. */
 export function createWeatherWarningsLayer({
@@ -53,6 +62,30 @@ export function createWeatherWarningsLayer({
   let _selectedCardId = null;
   /** @type {Map<string, object>} Geometry-free rows with a card anchor. */
   const _rowById = new Map();
+  /** Warning families switched off from the row; display-only, not shared. */
+  const _hiddenSources = new Set();
+  let _rowControlsListener = null;
+
+  const visibleRows = () =>
+    [..._rowById.values()].filter((row) => !_hiddenSources.has(sourceOf(row)));
+
+  /** Show or hide each polygon by its warning family. */
+  function applySourceVisibility() {
+    for (const entity of _dataSource?.entities.values ?? [])
+      entity.show = !_hiddenSources.has(entity.properties?.source?.getValue());
+    const selected = _selectedId ? _rowById.get(_selectedId) : null;
+    if (selected && _hiddenSources.has(sourceOf(selected))) {
+      _selectedId = null;
+      publishSelectedCard();
+    }
+  }
+
+  function toggleSource(id) {
+    if (_hiddenSources.has(id)) _hiddenSources.delete(id);
+    else _hiddenSources.add(id);
+    applySourceVisibility();
+    _rowControlsListener?.();
+  }
 
   const canSelect = () =>
     overlayHost && screenSpaceEventHandlerFactory && picking;
@@ -95,8 +128,9 @@ export function createWeatherWarningsLayer({
     const pickId = picking.resolvePickId(picked);
     if (typeof pickId !== 'string' || !pickId.startsWith(PICK_PREFIX))
       return null;
-    // Warning ids contain dots but never colons; the suffix is the polygon index.
-    const warningId = pickId.slice(PICK_PREFIX.length).split(':')[0];
+    // NVE and Varsom ids contain colons; only the last segment is the polygon index.
+    const rest = pickId.slice(PICK_PREFIX.length);
+    const warningId = rest.slice(0, rest.lastIndexOf(':'));
     return _rowById.has(warningId) ? warningId : null;
   }
 
@@ -224,6 +258,8 @@ export function createWeatherWarningsLayer({
             nextEntities.push(
               new Cesium.Entity({
                 id: `${PICK_PREFIX}${row.stableId}:${index}`,
+                show: !_hiddenSources.has(sourceOf(row)),
+                properties: { source: sourceOf(row) },
                 polygon: {
                   hierarchy: new Cesium.PolygonHierarchy(
                     outerPositions,
@@ -263,6 +299,7 @@ export function createWeatherWarningsLayer({
         _count = rows.length;
         _lastUpdate = Date.now();
         _lastError = null;
+        _rowControlsListener?.();
         console.log(
           `[Data:WeatherWarnings] Updated: ${_count} warnings, ${nextEntities.length} polygons`,
         );
@@ -303,7 +340,7 @@ export function createWeatherWarningsLayer({
         ? Math.max(1, Math.floor(maxCount))
         : 2000;
       const result = [];
-      for (const row of _rowById.values()) {
+      for (const row of visibleRows()) {
         if (result.length >= limit) break;
         const { anchor, stableId, ...facts } = row;
         result.push({
@@ -317,9 +354,19 @@ export function createWeatherWarningsLayer({
     },
 
     getRowControls() {
-      const rows = [..._rowById.values()];
+      const all = [..._rowById.values()];
+      const rows = visibleRows();
       return {
-        chips: [],
+        chips: SOURCES.map(({ id, label, title }) => {
+          const count = all.filter((row) => sourceOf(row) === id).length;
+          return {
+            id: `source-${id}`,
+            label: count ? `${label} ${count}` : label,
+            title: `${_hiddenSources.has(id) ? 'Show' : 'Hide'} ${title}`,
+            active: !_hiddenSources.has(id),
+            onClick: () => toggleSource(id),
+          };
+        }),
         legend: WARNING_LEVELS.map((level, index) => ({
           label: LEVEL_LABELS[level],
           color: warningAccent(level),
@@ -327,11 +374,16 @@ export function createWeatherWarningsLayer({
           ...(index === 0
             ? {
                 blurb:
-                  'Official MET Norway warnings for land and sea areas. Covers Norway and its waters only.',
+                  'Official warnings in effect now, yellow and above: MET Norway weather (land and sea), NVE flood and landslide (by municipality) and Varsom avalanche danger (by region). Norway only.',
               }
             : {}),
         })),
       };
+    },
+
+    /** The layer panel's hook for repainting the row after a toggle or refresh. */
+    setRowControlsListener(listener) {
+      _rowControlsListener = typeof listener === 'function' ? listener : null;
     },
 
     getStats() {

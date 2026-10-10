@@ -93,14 +93,15 @@ export function buildWarningCard(row, nowMs) {
   if (description) details.push(description);
   const instruction = clip(row.instruction);
   if (instruction) details.push(instruction);
-  if (row.web) details.push('MET Norway ↗ · click card to open');
+  const publisher = (row.source ?? 'met') === 'met' ? 'MET Norway' : 'Varsom';
+  if (row.web) details.push(`${publisher} ↗ · click card to open`);
   const title = `WARNING · ${row.eventName || row.event || 'Weather'}`;
   return {
     id: `weather-warning-card:${row.stableId}`,
     selected: true,
     interactive: Boolean(row.web),
     ...(row.web
-      ? { accessibilityLabel: `Open ${title} on MET Norway` }
+      ? { accessibilityLabel: `Open ${title} on ${publisher}` }
       : undefined),
     title,
     details,

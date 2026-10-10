@@ -675,10 +675,10 @@ test('the voice TOOL SCHEMA matches the pinned contract — the mission mapping 
   // list descriptions; the missions still ride existing tools.
   // Street Level adds toggle enum values and the generated alias hint;
   // Weather Warnings adds manifest-generated enum values and aliases.
-  assert.equal(block.length, 29983, 'serialized tool schema length drifted');
+  assert.equal(block.length, 29990, 'serialized tool schema length drifted');
   assert.equal(
     crypto.createHash('sha256').update(block).digest('hex'),
-    '003849bb65f3be1490bc96101eb4dedeb722d5c60b4a02a6017c2330b9a7ed7a',
+    '736e49f79efff4f2a6478433efd70a30bf2757c0608dd460a1eeebfdeca61fec',
     'the first-run missions must ride EXISTING tools: no schema edit, no cache bust',
   );
   const instructions = fs.readFileSync(new URL('../server/providers/openai/instructions.js', import.meta.url), 'utf8');

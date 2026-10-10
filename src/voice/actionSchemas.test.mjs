@@ -38,7 +38,7 @@ test('the complete Realtime tool payload pins the manifest-generated layer relea
     // requested radius and center authority in descriptions only.
     // Street Level adds its toggle enum values and generated alias hint;
     // Weather Warnings adds its enum values and aliases.
-    '5f1c62d727803949a8b130e279ccdac83d9ffcb48c014e58938c32dfd39cd10c',
+    'c4bc503d034d60120ef02399a834e2cc5b450c94534f41e24b10f568fca8694e',
   );
 });
 

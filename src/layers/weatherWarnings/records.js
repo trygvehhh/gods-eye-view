@@ -93,6 +93,7 @@ export function normalizeWeatherWarningSnapshot(geojson) {
     const { onset, expires } = intervalMs(feature.when);
     rows.push({
       stableId,
+      source: 'met',
       level,
       event: text(properties.event),
       eventName: text(properties.eventAwarenessName),

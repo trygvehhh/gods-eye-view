@@ -202,11 +202,16 @@ const layers = [
       'storm warnings',
       'norway warnings',
       'farevarsel',
+      'flood warnings',
+      'landslide warnings',
+      'avalanche warnings',
+      'avalanche danger',
     ],
     context: false,
     query: {
       fields: {
         level: ['t'],
+        source: ['t'],
         event: ['t'],
         eventName: ['t'],
         area: ['t'],
