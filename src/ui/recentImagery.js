@@ -28,13 +28,14 @@ const MODE_LABELS = [
 ];
 const START_HERE_TITLES = {
   clear: 'Newest low-cloud day for this box · scene cloud, not box cloud',
-  cloudy: 'Newest day covering this box · cloudier than 20%',
+  cloudy:
+    'Least cloudy day covering this box, newer days within 10 points preferred · cloudier than 20%',
   partial: 'Newest day with imagery for this box · partial coverage',
   overview: 'Newest daily overview for this box',
 };
 const START_HERE_REASONS = {
   clear: 'newest clear day',
-  cloudy: 'newest day (cloudy)',
+  cloudy: 'least cloudy day',
   partial: 'newest day (partial coverage)',
   overview: 'newest overview',
 };
