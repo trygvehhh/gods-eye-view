@@ -193,6 +193,32 @@ const layers = [
     },
   },
   {
+    id: 'weather-warnings',
+    aliases: [
+      'weather warnings',
+      'met warnings',
+      'met alerts',
+      'gale warnings',
+      'storm warnings',
+      'norway warnings',
+      'farevarsel',
+    ],
+    context: false,
+    query: {
+      fields: {
+        level: ['t'],
+        event: ['t'],
+        eventName: ['t'],
+        area: ['t'],
+        domain: ['t'],
+        severity: ['t'],
+        onset: ['ms'],
+        expires: ['ms'],
+      },
+      timeField: 'onset',
+    },
+  },
+  {
     id: 'weather-cyclones',
     aliases: ['cyclones', 'hurricanes', 'typhoons', 'tropical storms'],
     context: false,

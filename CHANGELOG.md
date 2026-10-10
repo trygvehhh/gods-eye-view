@@ -1,5 +1,14 @@
 # Changelog
 
+- Add a Weather Warnings layer under Weather with MET Norway's official
+  yellow, orange and red warnings for Norwegian land and sea areas (gale,
+  wind, rain, snow, flooding and other MET events). Areas are drawn as
+  coloured polygons; selecting one opens a card with level, area, validity,
+  the warning text and advice, linking to MET Norway. Data is fetched keyless
+  through `/api/weather-warnings` with a 5-minute server cache and an
+  identifying User-Agent, as api.met.no requires. Voice and the analyst query
+  can address the layer, and share links carry it as token `3`.
+
 - Treat explicitly current, complete empty vessel coverage as a successful update,
   clearing obsolete contacts while retaining stale or incomplete snapshots.
 

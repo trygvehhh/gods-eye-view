@@ -36,8 +36,9 @@ test('the complete Realtime tool payload pins the manifest-generated layer relea
     // consolidated tool wording (each policy stated once); model-facing tools
     // omit top-level anyOf (OpenAI rejects it). Contacts list routing preserves
     // requested radius and center authority in descriptions only.
-    // Street Level adds its toggle enum values and generated alias hint.
-    '9eb113454c5af5e32e27ffcdc7919d0e4600ba1d204f8f175e071152be41ad0f',
+    // Street Level adds its toggle enum values and generated alias hint;
+    // Weather Warnings adds its enum values and aliases.
+    '5f1c62d727803949a8b130e279ccdac83d9ffcb48c014e58938c32dfd39cd10c',
   );
 });
 

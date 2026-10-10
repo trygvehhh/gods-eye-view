@@ -27,5 +27,6 @@
   ["weather-lightning", "l"],
   ["weather-radar", "v"],
   ["weather-satellite", "o"],
+  ["weather-warnings", "3"],
   ["wind", "k"]
 ]
